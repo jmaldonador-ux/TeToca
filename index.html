@@ -143,6 +143,7 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const _params = new URLSearchParams(location.search);
 let CENTRO = (_params.get('c') || localStorage.getItem('tt_centro') || 'demo').toLowerCase();
 if(_params.get('c')) localStorage.setItem('tt_centro', CENTRO);
+const C_EXPLICITO = !!_params.get('c');
 
 const configurado = SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes("PEGAR");
 if(!configurado){ document.getElementById('warn-cfg').style.display='block'; }
@@ -175,22 +176,9 @@ async function cargar(){
   // Mostrar el nombre del centro en los encabezados
   const cn = $('centro-nombre'); if(cn) cn.textContent = cfg.nombre;
   const tvc = $('tv-centro'); if(tvc) tvc.textContent = ' ' + cfg.nombre;
-  gateFuncionario();
   setConn(true,'en línea · ' + CENTRO);
   renderAll();
 }
-// ---- Acceso funcionario: clave propia de cada centro ----
-let _authOk = false;
-function gateFuncionario(){
-  if(!$('f-lista') || _authOk) return;
-  const k = 'tt_auth_' + CENTRO;
-  if(sessionStorage.getItem(k) === 'ok'){ _authOk = true; return; }
-  const c = prompt('Clave de funcionario — ' + (cfg.nombre || CENTRO) + ':');
-  if(c === cfg.clave){ sessionStorage.setItem(k, 'ok'); _authOk = true; return; }
-  document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:sans-serif;color:#4a5a68"><h2>🔒 Acceso restringido</h2><p>Esta vista es solo para funcionarios del centro de salud.</p></div>';
-  throw new Error('sin autorización');
-}
-
 function esperando(){ return fila.filter(x=>x.estado==='esperando'); }
 function llamado(){ return fila.find(x=>x.estado==='llamado'); }
 function proximoNum(){
@@ -326,7 +314,7 @@ async function liberar(){
 
 function renderFuncionario(){
   if(!$('f-lista')) return;
-  $('f-fecha').textContent = new Date().toLocaleDateString('es-CL',{weekday:'long', day:'numeric', month:'long'});
+  $('f-fecha').textContent = (cfg.nombre ? cfg.nombre + ' — ' : '') + new Date().toLocaleDateString('es-CL',{weekday:'long', day:'numeric', month:'long'});
   const box = $('f-lista');
   const activos = fila.filter(x=>x.estado==='esperando'||x.estado==='llamado');
   box.innerHTML = activos.length ? activos.map(x=>`
@@ -400,13 +388,68 @@ setInterval(tick, 5000); tick();
 function renderAll(){ renderPaciente(); renderFuncionario(); renderSala(); }
 
 // ---------- Tiempo real + respaldo por sondeo ----------
-if(sb){
+let _iniciado = false;
+function iniciar(){
+  if(_iniciado) return; _iniciado = true;
   sb.channel('fila-rt-' + CENTRO)
     .on('postgres_changes', {event:'*', schema:'public', table:'fila_tickets', filter:'centro=eq.'+CENTRO}, cargar)
     .on('postgres_changes', {event:'*', schema:'public', table:'centros', filter:'slug=eq.'+CENTRO}, cargar)
     .subscribe(status => { if(status==='SUBSCRIBED') setConn(true,'en línea · tiempo real'); });
   setInterval(cargar, 8000);  // respaldo si el tiempo real falla
   cargar();
+}
+
+// ---- Acceso funcionario: elegir centro + clave del centro ----
+async function loginFuncionario(){
+  const grid = document.querySelector('.f-grid');
+  if(grid) grid.style.display = 'none';
+  const {data} = await sb.from('centros').select('slug,nombre').order('nombre');
+  const opts = (data||[]).map(c => `<option value="${c.slug}"${c.slug===CENTRO?' selected':''}>${c.nombre}</option>`).join('');
+  document.querySelector('.wrap').insertAdjacentHTML('afterbegin', `
+  <div class="panel" id="f-login" style="max-width:440px;margin:30px auto;">
+    <h3>🔐 Acceso funcionario</h3>
+    <label>Centro de salud</label><select id="login-centro">${opts}</select>
+    <label>Clave del centro</label><input id="login-clave" type="password" placeholder="clave del centro">
+    <div id="login-err" style="color:var(--red);font-size:13px;display:none;margin-top:8px;">Clave incorrecta para ese centro.</div>
+    <button class="bigbtn" id="login-btn" style="margin-top:16px;">Entrar</button>
+  </div>`);
+  setConn(true, 'elija su centro');
+  $('login-btn').onclick = async () => {
+    const slug = $('login-centro').value;
+    const {data:c} = await sb.from('centros').select('*').eq('slug', slug).single();
+    if(!c || $('login-clave').value !== c.clave){ $('login-err').style.display = 'block'; return; }
+    sessionStorage.setItem('tt_auth_' + slug, 'ok');
+    entrarPanel(slug);
+  };
+  if(sessionStorage.getItem('tt_auth_' + CENTRO) === 'ok') entrarPanel(CENTRO);
+}
+function entrarPanel(slug){
+  CENTRO = slug; localStorage.setItem('tt_centro', slug);
+  const l = $('f-login'); if(l) l.remove();
+  const grid = document.querySelector('.f-grid');
+  if(grid) grid.style.display = '';
+  iniciar();
+}
+
+// ---- Pantalla de sala: selector de centro si no viene en la URL ----
+async function elegirCentroSala(){
+  const tv = document.querySelector('.tv');
+  if(tv) tv.style.display = 'none';
+  const {data} = await sb.from('centros').select('slug,nombre').order('nombre');
+  const opts = (data||[]).map(c => `<option value="${c.slug}">${c.nombre}</option>`).join('');
+  document.querySelector('.wrap').insertAdjacentHTML('afterbegin', `
+  <div class="panel" id="sala-sel" style="max-width:460px;margin:30px auto;">
+    <h3>📺 Pantalla de sala de espera</h3>
+    <label>¿De qué centro de salud?</label><select id="sel-centro">${opts}</select>
+    <button class="bigbtn" style="margin-top:16px;" onclick="location.search='?c='+document.getElementById('sel-centro').value">Mostrar esta sala</button>
+  </div>`);
+  setConn(true, 'elija su centro');
+}
+
+if(sb){
+  if($('f-lista')) loginFuncionario();
+  else if($('tv-calling') && !C_EXPLICITO) elegirCentroSala();
+  else iniciar();
 } else {
   setConn(false,'sin configurar');
   renderAll();
