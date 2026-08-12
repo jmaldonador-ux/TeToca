@@ -140,16 +140,6 @@
   </div>
 
 <script type="module">
-const CLAVE_FUNCIONARIO = "tetoca2026";
-if(sessionStorage.getItem('tt_auth') !== 'ok'){
-  const c = prompt('Clave de funcionario:');
-  if(c === CLAVE_FUNCIONARIO){ sessionStorage.setItem('tt_auth','ok'); }
-  else {
-    document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:sans-serif;color:#4a5a68"><h2>🔒 Acceso restringido</h2><p>Esta vista es solo para funcionarios del centro de salud.</p></div>';
-    throw new Error('sin autorización');
-  }
-}
-
 /* ==================== CONFIG ====================
    1) Ejecuta crear_tablas_fila.sql en Supabase (SQL Editor).
    2) Pega aquí la URL y la anon key de tu proyecto
@@ -159,6 +149,11 @@ const SUPABASE_ANON_KEY = "sb_publishable_YP7f1MDMKcjs6qWUwWyAFQ_auhrUrxz";
 /* ================================================ */
 
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+// ---- Centro (multi-consultorio): se elige con ?c=slug en la URL ----
+const _params = new URLSearchParams(location.search);
+let CENTRO = (_params.get('c') || localStorage.getItem('tt_centro') || 'demo').toLowerCase();
+if(_params.get('c')) localStorage.setItem('tt_centro', CENTRO);
 
 const configurado = SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes("PEGAR");
 if(!configurado){ document.getElementById('warn-cfg').style.display='block'; }
@@ -177,15 +172,36 @@ async function cargar(){
   if(!sb) return;
   const hoy = new Date(); hoy.setHours(0,0,0,0);
   const [t, c] = await Promise.all([
-    sb.from('fila_tickets').select('*').gte('creado', hoy.toISOString()).order('orden',{ascending:true}),
-    sb.from('fila_config').select('*').eq('id',1).single(),
+    sb.from('fila_tickets').select('*').eq('centro', CENTRO).gte('creado', hoy.toISOString()).order('orden',{ascending:true}),
+    sb.from('centros').select('*').eq('slug', CENTRO).single(),
   ]);
+  if(c.error || !c.data){
+    setConn(false, 'centro no encontrado');
+    const pb = $('p-body'); if(pb) pb.innerHTML = '<div class="empty">Centro "'+CENTRO+'" no existe.<br>Revise el enlace o QR.</div>';
+    return;
+  }
   if(t.error){ setConn(false,'error: ¿ejecutaste el SQL?'); console.error(t.error); return; }
   fila = t.data || [];
-  if(c.data){ cfg = c.data; }
-  setConn(true,'en línea');
+  cfg = c.data;
+  // Mostrar el nombre del centro en los encabezados
+  const cn = $('centro-nombre'); if(cn) cn.textContent = cfg.nombre;
+  const tvc = $('tv-centro'); if(tvc) tvc.textContent = ' ' + cfg.nombre;
+  gateFuncionario();
+  setConn(true,'en línea · ' + CENTRO);
   renderAll();
 }
+// ---- Acceso funcionario: clave propia de cada centro ----
+let _authOk = false;
+function gateFuncionario(){
+  if(!$('f-lista') || _authOk) return;
+  const k = 'tt_auth_' + CENTRO;
+  if(sessionStorage.getItem(k) === 'ok'){ _authOk = true; return; }
+  const c = prompt('Clave de funcionario — ' + (cfg.nombre || CENTRO) + ':');
+  if(c === cfg.clave){ sessionStorage.setItem(k, 'ok'); _authOk = true; return; }
+  document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:sans-serif;color:#4a5a68"><h2>🔒 Acceso restringido</h2><p>Esta vista es solo para funcionarios del centro de salud.</p></div>';
+  throw new Error('sin autorización');
+}
+
 function esperando(){ return fila.filter(x=>x.estado==='esperando'); }
 function llamado(){ return fila.find(x=>x.estado==='llamado'); }
 function proximoNum(){
@@ -203,7 +219,6 @@ window.show = v => {
 
 function renderPaciente(){
   const el = $('p-body');
-  if(!el) return;
   if(!sb){ el.innerHTML = '<div class="empty">Configura Supabase para comenzar</div>'; return; }
   const mio = fila.find(x=>String(x.id)===String(miId));
   if(!mio){
@@ -306,7 +321,7 @@ async function sacarNumero(){
     }
   }
   const {data, error} = await sb.from('fila_tickets').insert({
-    num: proximoNum(), nombre, rut: formateaRut(rutIn), fono,
+    num: proximoNum(), nombre, rut: formateaRut(rutIn), fono, centro: CENTRO,
     motivo: $('in-motivo').value, triage: +$('in-triage').value,
   }).select().single();
   if(error){ alert('Error al sacar número: '+error.message); return; }
@@ -320,7 +335,6 @@ async function liberar(){
 }
 
 function renderFuncionario(){
-  if(!$('f-lista')) return;
   $('f-fecha').textContent = new Date().toLocaleDateString('es-CL',{weekday:'long', day:'numeric', month:'long'});
   const box = $('f-lista');
   const activos = fila.filter(x=>x.estado==='esperando'||x.estado==='llamado');
@@ -368,17 +382,16 @@ window.llamarSiguiente = async ()=>{
 };
 window.reiniciarDia = async ()=>{
   if(!confirm('¿Borrar todos los tickets del día?')) return;
-  await sb.from('fila_tickets').delete().gte('id', 0);
+  await sb.from('fila_tickets').delete().eq('centro', CENTRO);
   localStorage.removeItem('fila_ticket_id'); miId=null;
   await cargar();
 };
 window.guardarConfig = async ()=>{
   cfg.cupos = +$('cfg-cupos').value; cfg.box = $('cfg-box').value; cfg.tpo_min = +$('cfg-tpo').value;
-  await sb.from('fila_config').update({cupos:cfg.cupos, box:cfg.box, tpo_min:cfg.tpo_min}).eq('id',1);
+  await sb.from('centros').update({cupos:cfg.cupos, box:cfg.box, tpo_min:cfg.tpo_min}).eq('slug', CENTRO);
 };
 
 function renderSala(){
-  if(!$('tv-calling')) return;
   const l = llamado();
   $('tv-calling').innerHTML = l
     ? `<div class="lbl">Llamando a</div><div class="num">${l.num}</div>
@@ -389,16 +402,16 @@ function renderSala(){
     `<div class="nx"><span class="a">${x.num}</span><span class="b">~${(i+1)*cfg.tpo_min} min</span></div>`).join('')
     || '<div style="font-size:15px;color:#7d97a5">Fila vacía</div>';
 }
-function tick(){ const c=$('tv-clock'); if(!c) return; c.textContent = new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
+function tick(){ $('tv-clock').textContent = new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
 setInterval(tick, 5000); tick();
 
 function renderAll(){ renderPaciente(); renderFuncionario(); renderSala(); }
 
 // ---------- Tiempo real + respaldo por sondeo ----------
 if(sb){
-  sb.channel('fila-rt')
-    .on('postgres_changes', {event:'*', schema:'public', table:'fila_tickets'}, cargar)
-    .on('postgres_changes', {event:'*', schema:'public', table:'fila_config'},  cargar)
+  sb.channel('fila-rt-' + CENTRO)
+    .on('postgres_changes', {event:'*', schema:'public', table:'fila_tickets', filter:'centro=eq.'+CENTRO}, cargar)
+    .on('postgres_changes', {event:'*', schema:'public', table:'centros', filter:'slug=eq.'+CENTRO}, cargar)
     .subscribe(status => { if(status==='SUBSCRIBED') setConn(true,'en línea · tiempo real'); });
   setInterval(cargar, 8000);  // respaldo si el tiempo real falla
   cargar();
