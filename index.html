@@ -208,6 +208,7 @@ window.show = v => {
 
 function renderPaciente(){
   const el = $('p-body');
+  if(!el) return;
   if(!sb){ el.innerHTML = '<div class="empty">Configura Supabase para comenzar</div>'; return; }
   const mio = fila.find(x=>String(x.id)===String(miId));
   if(!mio){
@@ -324,6 +325,7 @@ async function liberar(){
 }
 
 function renderFuncionario(){
+  if(!$('f-lista')) return;
   $('f-fecha').textContent = new Date().toLocaleDateString('es-CL',{weekday:'long', day:'numeric', month:'long'});
   const box = $('f-lista');
   const activos = fila.filter(x=>x.estado==='esperando'||x.estado==='llamado');
@@ -381,6 +383,7 @@ window.guardarConfig = async ()=>{
 };
 
 function renderSala(){
+  if(!$('tv-calling')) return;
   const l = llamado();
   $('tv-calling').innerHTML = l
     ? `<div class="lbl">Llamando a</div><div class="num">${l.num}</div>
@@ -391,7 +394,7 @@ function renderSala(){
     `<div class="nx"><span class="a">${x.num}</span><span class="b">~${(i+1)*cfg.tpo_min} min</span></div>`).join('')
     || '<div style="font-size:15px;color:#7d97a5">Fila vacía</div>';
 }
-function tick(){ $('tv-clock').textContent = new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
+function tick(){ const c=$('tv-clock'); if(!c) return; c.textContent = new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
 setInterval(tick, 5000); tick();
 
 function renderAll(){ renderPaciente(); renderFuncionario(); renderSala(); }
@@ -409,7 +412,6 @@ if(sb){
   renderAll();
 }
 
-// --- PWA: registrar service worker + invitación a instalar ---
 if('serviceWorker' in navigator && location.protocol.startsWith('http')){
   navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
