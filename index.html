@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TeToca · Saca tu número</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a5c64">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TeToca">
+
 <style>
   :root{
     --ink:#1a2733; --ink2:#4a5a68; --muted:#8195a3;
@@ -104,6 +111,11 @@
   <div class="tag" style="margin-left:auto;font-weight:700">📱 Pedir mi número</div>
 </div>
 
+<div id="pwa-banner" style="display:none;background:#0e7c86;color:#fff;padding:10px 16px;text-align:center;font-size:14px;">
+  <span id="pwa-txt">📲 Instala TeToca en tu teléfono</span>
+  <button id="pwa-btn" style="margin-left:10px;background:#fff;color:#0a5c64;border:none;border-radius:8px;padding:6px 14px;font-weight:700;cursor:pointer;">Instalar</button>
+  <button onclick="document.getElementById('pwa-banner').style.display='none'" style="margin-left:6px;background:transparent;color:#cfe8ea;border:none;cursor:pointer;font-size:16px;">✕</button>
+</div>
 <div class="wrap">
   <div class="warn" id="warn-cfg">⚠️ <b>Falta configurar la conexión:</b> abre este archivo con un editor de texto y en la sección <code>CONFIG</code> (al inicio del &lt;script&gt;) pega la <b>anon key</b> de tu proyecto Supabase (Supabase → Settings → API Keys). Luego ejecuta <code>crear_tablas_fila.sql</code> en el SQL Editor.</div>
 
@@ -372,6 +384,32 @@ if(sb){
 } else {
   setConn(false,'sin configurar');
   renderAll();
+}
+
+// Registrar service worker (hace la app instalable)
+
+// --- Invitación a instalar la app ---
+const yaInstalada = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+if(!yaInstalada){
+  let deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {   // Android / Chrome
+    e.preventDefault(); deferredPrompt = e;
+    document.getElementById('pwa-banner').style.display = 'block';
+  });
+  document.getElementById('pwa-btn').onclick = async () => {
+    if(deferredPrompt){ deferredPrompt.prompt(); deferredPrompt = null; }
+    document.getElementById('pwa-banner').style.display = 'none';
+  };
+  const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if(esIOS){                                                 // iPhone: instrucción manual
+    document.getElementById('pwa-txt').innerHTML = '📲 Para instalar: toca <b>Compartir</b> (⬆︎) y luego <b>“Agregar a pantalla de inicio”</b>';
+    document.getElementById('pwa-btn').style.display = 'none';
+    document.getElementById('pwa-banner').style.display = 'block';
+  }
+}
+
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
 </script>
 </body>
