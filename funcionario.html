@@ -165,6 +165,7 @@ let profes = [], horarios = [], citasHoy = [];   // agenda
 let pModo = 'hoy';             // pestaña del paciente: 'hoy' | 'reservar'
 let res = { prof:null, fecha:null, hora:null };  // reserva en curso
 let miCita = null;             // cita futura de ESTE dispositivo
+let agFecha = null;            // día visible en el panel "Citas del día" (null = hoy)
 let cfg = { cupos:30, box:'Box 2', tpo_min:12 };
 let miId = localStorage.getItem('fila_ticket_id'); // ticket de ESTE dispositivo
 const TRI = {1:['Leve','t1'], 2:['Media','t2'], 3:['Prioritaria','t3']};
@@ -194,7 +195,7 @@ async function cargar(){
   // agenda: profesionales, horarios y citas de hoy del centro
   const [pr, ct] = await Promise.all([
     sb.from('profesionales').select('*').eq('centro', CENTRO).eq('activo', true).order('nombre'),
-    sb.from('citas').select('*, profesionales(nombre)').eq('centro', CENTRO).eq('fecha', hoyLocalISO()).neq('estado','anulada').order('hora'),
+    sb.from('citas').select('*, profesionales(nombre)').eq('centro', CENTRO).eq('fecha', agFecha || hoyLocalISO()).neq('estado','anulada').order('hora'),
   ]);
   profes = pr.data || []; citasHoy = ct.data || [];
   const _ids = profes.map(p=>p.id);
@@ -600,7 +601,14 @@ async function loginFuncionario(){
 }
 const PANELES_AGENDA = `
 <div class="panel" id="pan-agenda" style="margin-top:18px;">
-  <h3>📅 Citas de hoy</h3><div id="ag-lista"><div class="empty">Cargando…</div></div>
+  <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">📅 Citas del día
+    <span style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+      <button class="ib" id="ag-prev" title="Día anterior">◀</button>
+      <b id="ag-fecha" style="font-size:13px;min-width:118px;text-align:center;"></b>
+      <button class="ib" id="ag-next" title="Día siguiente">▶</button>
+      <button class="ib" id="ag-hoy" style="display:none;font-weight:700;">Hoy</button>
+    </span>
+  </h3><div id="ag-lista"><div class="empty">Cargando…</div></div>
 </div>
 <div class="panel" id="pan-profes" style="margin-top:18px;">
   <h3>👩‍⚕️ Profesionales y horarios</h3>
@@ -616,6 +624,9 @@ const PANELES_AGENDA = `
 
 function renderAgendaHoy(){
   const el = $('ag-lista'); if(!el) return;
+  const f = agFecha || hoyLocalISO();
+  const lf = $('ag-fecha'); if(lf) lf.textContent = DIAS[diaISO(f)] + ' ' + f.slice(8,10) + '/' + f.slice(5,7);
+  const bh = $('ag-hoy');  if(bh) bh.style.display = agFecha ? '' : 'none';
   el.innerHTML = citasHoy.length ? citasHoy.map(c => `
     <div class="qrow">
       <div class="n">${String(c.hora).slice(0,5)}</div>
@@ -625,7 +636,7 @@ function renderAgendaHoy(){
         <button class="ib ok" data-a="atendida" data-id="${c.id}">✔</button>
         <button class="ib" data-a="ausente" data-id="${c.id}">✖ Ausente</button>
         <button class="ib no" data-a="anulada" data-id="${c.id}">Anular</button>` : ''}
-    </div>`).join('') : '<div class="empty">Sin citas reservadas para hoy</div>';
+    </div>`).join('') : '<div class="empty">Sin citas reservadas para este día</div>';
   el.querySelectorAll('.ib').forEach(b => b.onclick = async () => {
     await sb.from('citas').update({estado: b.dataset.a}).eq('id', +b.dataset.id);
     cargar();
@@ -700,7 +711,14 @@ function entrarPanel(slug){
   CENTRO = slug; localStorage.setItem('tt_centro', slug);
   const l = $('f-login'); if(l) l.remove();
   const grid = document.querySelector('.f-grid');
-  if(grid){ grid.style.display = ''; if(!$('pan-agenda')) grid.insertAdjacentHTML('afterend', PANELES_AGENDA); }
+  if(grid){ grid.style.display = ''; if(!$('pan-agenda')){ grid.insertAdjacentHTML('afterend', PANELES_AGENDA);
+    const mover = n => { const d = new Date((agFecha || hoyLocalISO()) + 'T12:00:00'); d.setDate(d.getDate()+n);
+      const iso = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      agFecha = (iso === hoyLocalISO()) ? null : iso; cargar(); };
+    $('ag-prev').onclick = () => mover(-1);
+    $('ag-next').onclick = () => mover(1);
+    $('ag-hoy').onclick  = () => { agFecha = null; cargar(); };
+  } }
   iniciar();
 }
 
