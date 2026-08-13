@@ -70,10 +70,21 @@
   .t1{background:var(--green-l); color:var(--green);} .t2{background:var(--amber-l); color:var(--amber);} .t3{background:var(--red-l); color:var(--red);}
   .est{font-size:11px; font-weight:700; padding:3px 8px; border-radius:10px; background:var(--teal-l); color:var(--teal-d);}
   .est.llamado{background:var(--amber-l); color:var(--amber);}
-  .chip.libre{background:#fff; border:1px dashed var(--teal); color:var(--teal-d);}
-  .dispo-row{border-bottom:1px solid var(--line); padding:9px 0;}
-  .dispo-row:last-child{border-bottom:none;}
-  .dispo-chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;}
+  .cal-heads{display:flex;}
+  .cal-gut{width:48px; flex:none;}
+  .cal-hd{flex:1; min-width:110px; text-align:center; padding:6px 4px 8px; border-bottom:2px solid var(--line); font-size:12.5px;}
+  .cal-hd b{display:block; font-size:13px; color:var(--teal-d);}
+  .cal-hd .sub{color:var(--muted); font-size:10.5px;}
+  .cal-body{position:relative; display:flex;}
+  .cal-hourline{position:absolute; left:48px; right:0; border-top:1px solid var(--line); z-index:0;}
+  .cal-hourlbl{position:absolute; left:0; width:42px; text-align:right; font-size:10.5px; color:var(--muted); transform:translateY(-55%); background:var(--card); z-index:1;}
+  .cal-col{flex:1; min-width:110px; position:relative; border-left:1px solid var(--line); z-index:1;}
+  .cal-slot{position:absolute; left:3px; right:3px; border-radius:6px; font-size:11px; line-height:1.3; padding:2px 7px; overflow:hidden; box-sizing:border-box;}
+  .cal-slot.libre{border:1.5px dashed var(--teal); color:var(--teal-d); background:rgba(224,242,243,.35);}
+  .cal-slot.res{background:var(--amber-l); color:var(--amber); border:1px solid #eed9b8;}
+  .cal-slot.at{background:var(--green-l); color:var(--green); border:1px solid #cbe6d4;}
+  .cal-slot.aus{background:var(--red-l); color:var(--red); border:1px solid #f0c5c5;}
+  .cal-off{position:absolute; inset:0; background:repeating-linear-gradient(45deg,#f5f8fa,#f5f8fa 8px,#edf1f4 8px,#edf1f4 16px); color:var(--muted); font-size:11px; display:flex; justify-content:center; padding-top:16px;}
   .ib{border:1px solid var(--line); background:#fff; border-radius:7px; padding:5px 8px; cursor:pointer; font-size:12px;}
   .ib:hover{background:var(--teal-l);}
   .ib.ok{color:var(--green);} .ib.no{color:var(--red);}
@@ -655,30 +666,50 @@ function renderDispo(){
   const f = agFecha || hoyLocalISO(), dia = diaISO(f);
   const lf = $('dispo-fecha'); if(lf) lf.textContent = '— ' + DIAS[dia] + ' ' + f.slice(8,10) + '/' + f.slice(5,7);
   if(!profes.length){ el.innerHTML = '<div class="empty">Aún no hay profesionales en este centro</div>'; return; }
-  el.innerHTML = profes.map(p => {
-    const hs = horarios.filter(h => h.profesional_id===p.id && h.dia===dia);
-    if(!hs.length) return `<div class="dispo-row"><b>${p.nombre}</b> <span style="color:var(--muted);font-size:12px;">${p.especialidad} · no atiende este día</span></div>`;
-    const dur = p.duracion_min || 20, slots = [];
-    hs.forEach(h => {
-      const [h1,m1] = h.desde.split(':').map(Number), [h2,m2] = h.hasta.split(':').map(Number);
-      for(let t=h1*60+m1; t+dur<=h2*60+m2; t+=dur)
-        slots.push(String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0'));
-    });
-    slots.sort();
+  const aMin = x => { const p = String(x).split(':').map(Number); return p[0]*60 + p[1]; };
+  const hsDia = horarios.filter(h => h.dia===dia && profes.some(p => p.id===h.profesional_id));
+  if(!hsDia.length){ el.innerHTML = '<div class="empty">Ningún profesional atiende este día</div>'; return; }
+  // rango horario del día (redondeado a horas completas)
+  let ini = Math.floor(Math.min(...hsDia.map(h=>aMin(h.desde)))/60)*60;
+  let fin = Math.ceil(Math.max(...hsDia.map(h=>aMin(h.hasta)))/60)*60;
+  const PX = 1.2, H = (fin-ini)*PX;   // 1 minuto = 1.2px
+  // datos por profesional: celdas posicionadas por hora, como eventos de iCal
+  const datos = profes.map(p => {
+    const hs = hsDia.filter(h => h.profesional_id===p.id);
+    const dur = p.duracion_min || 20;
     const citasP = citasHoy.filter(c => c.profesional_id===p.id);
-    let tom = 0;
-    const chips = slots.map(s => {
-      const c = citasP.find(x => String(x.hora).slice(0,5)===s);
-      if(c){ tom++;
-        const cls = c.estado==='atendida' ? 't1' : (c.estado==='ausente' ? 't3' : 't2');
-        return `<span class="chip ${cls}" title="${c.nombre}${c.rut ? ' · '+c.rut : ''} (${c.estado})">${s} · ${c.nombre.split(' ')[0]}</span>`;
+    let cells = '', tom = 0, tot = 0;
+    hs.forEach(h => {
+      for(let t=aMin(h.desde); t+dur<=aMin(h.hasta); t+=dur){
+        tot++;
+        const hh = String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
+        const c = citasP.find(x => String(x.hora).slice(0,5)===hh);
+        const top = (t-ini)*PX, alto = dur*PX - 3;
+        if(c){ tom++;
+          const cls = c.estado==='atendida' ? 'at' : (c.estado==='ausente' ? 'aus' : 'res');
+          cells += `<div class="cal-slot ${cls}" style="top:${top}px;height:${alto}px" title="${c.nombre}${c.rut ? ' · '+c.rut : ''} (${c.estado})"><b>${hh}</b> ${c.nombre.split(' ')[0]}</div>`;
+        } else {
+          cells += `<div class="cal-slot libre" style="top:${top}px;height:${alto}px">${hh}</div>`;
+        }
       }
-      return `<span class="chip libre">${s}</span>`;
-    }).join('');
-    const lib = slots.length - tom;
-    return `<div class="dispo-row"><b>${p.nombre}</b> <span style="color:var(--muted);font-size:12px;">${p.especialidad} · ${dur} min · ${tom} tomada${tom===1?'':'s'} · ${lib} libre${lib===1?'':'s'}</span>
-      <div class="dispo-chips">${chips}</div></div>`;
-  }).join('') + `<div class="triage-note" style="margin-top:10px;">Punteado = disponible · Amarillo = reservada · Verde = atendida · Rojo = ausente. El día se cambia con las flechas ◀ ▶ del panel de citas.</div>`;
+    });
+    return {p, hs, cells, tom, tot};
+  });
+  const heads = datos.map(d => `<div class="cal-hd"><b>${d.p.nombre}</b><span class="sub">${d.p.especialidad}${d.hs.length ? ' · '+d.tom+' tomada'+(d.tom===1?'':'s')+' · '+(d.tot-d.tom)+' libre'+((d.tot-d.tom)===1?'':'s') : ''}</span></div>`).join('');
+  const cols = datos.map(d => `<div class="cal-col" style="height:${H}px">${d.hs.length ? d.cells : '<div class="cal-off">no atiende</div>'}</div>`).join('');
+  let lines = '';
+  for(let t=ini; t<=fin; t+=60){
+    const y = (t-ini)*PX;
+    lines += `<div class="cal-hourline" style="top:${y}px"></div><div class="cal-hourlbl" style="top:${y}px">${String(t/60).padStart(2,'0')}:00</div>`;
+  }
+  el.innerHTML = `
+  <div style="overflow-x:auto;">
+    <div style="min-width:${48 + profes.length*110}px;">
+      <div class="cal-heads"><div class="cal-gut"></div>${heads}</div>
+      <div class="cal-body" style="height:${H}px;">${lines}<div class="cal-gut"></div>${cols}</div>
+    </div>
+  </div>
+  <div class="triage-note" style="margin-top:10px;">Punteado = disponible · Amarillo = reservada · Verde = atendida · Rojo = ausente. El día se cambia con las flechas ◀ ▶ del panel de citas.</div>`;
 }
 function renderProfes(){
   const el = $('prof-lista'); if(!el) return;
