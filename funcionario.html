@@ -161,6 +161,10 @@ if(!configurado){ document.getElementById('warn-cfg').style.display='block'; }
 const sb = configurado ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 let fila = [];                 // tickets del día, orden asc
+let profes = [], horarios = [], citasHoy = [];   // agenda
+let pModo = 'hoy';             // pestaña del paciente: 'hoy' | 'reservar'
+let res = { prof:null, fecha:null, hora:null };  // reserva en curso
+let miCita = null;             // cita futura de ESTE dispositivo
 let cfg = { cupos:30, box:'Box 2', tpo_min:12 };
 let miId = localStorage.getItem('fila_ticket_id'); // ticket de ESTE dispositivo
 const TRI = {1:['Leve','t1'], 2:['Media','t2'], 3:['Prioritaria','t3']};
@@ -187,6 +191,14 @@ async function cargar(){
   // Mostrar el nombre del centro en los encabezados
   const cn = $('centro-nombre'); if(cn) cn.textContent = cfg.nombre;
   const tvc = $('tv-centro'); if(tvc) tvc.textContent = ' ' + cfg.nombre;
+  // agenda: profesionales, horarios y citas de hoy del centro
+  const [pr, ct] = await Promise.all([
+    sb.from('profesionales').select('*').eq('centro', CENTRO).eq('activo', true).order('nombre'),
+    sb.from('citas').select('*, profesionales(nombre)').eq('centro', CENTRO).eq('fecha', hoyLocalISO()).neq('estado','anulada').order('hora'),
+  ]);
+  profes = pr.data || []; citasHoy = ct.data || [];
+  const _ids = profes.map(p=>p.id);
+  horarios = _ids.length ? ((await sb.from('horarios').select('*').in('profesional_id', _ids)).data || []) : [];
   setConn(true,'en línea · ' + CENTRO);
   renderAll();
 }
@@ -205,23 +217,73 @@ window.show = v => {
   renderAll();
 };
 
-function renderPaciente(){
-  const el = $('p-body');
-  if(!el) return;
-  if(!sb){ el.innerHTML = '<div class="empty">Configura Supabase para comenzar</div>'; return; }
-  const mio = fila.find(x=>String(x.id)===String(miId));
-  if(!mio){
-    const quedan = Math.max(cfg.cupos - fila.length, 0);
-    // Si el formulario ya está en pantalla, NO lo redibujamos (se borraría lo escrito):
-    // solo actualizamos el contador de cupos y el estado del botón.
-    if($('in-nombre')){
-      const nota = $('nota-cupos');
-      if(nota) nota.innerHTML = `El triage no altera el orden: informa al equipo clínico. Cupos disponibles: <b>${quedan}</b> de ${cfg.cupos}.`;
-      const b = $('btn-sacar');
-      if(b){ b.disabled = !quedan; b.textContent = quedan ? 'Sacar mi número' : 'Sin cupos por hoy'; }
-      return;
-    }
-    el.innerHTML = `
+
+// ---------- Agenda: helpers ----------
+function hoyLocalISO(){
+  const n = new Date();
+  return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
+}
+const DIAS = ['','lunes','martes','miércoles','jueves','viernes','sábado','domingo'];
+function diaISO(fechaISO){ const d = new Date(fechaISO+'T12:00:00'); const g = d.getDay(); return g===0?7:g; }
+function fechasDisponibles(prof){
+  const dias = new Set(horarios.filter(h=>h.profesional_id===prof.id).map(h=>h.dia));
+  const out = [];
+  for(let i=0;i<14;i++){
+    const d = new Date(); d.setDate(d.getDate()+i);
+    const iso = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    if(dias.has(diaISO(iso))) out.push(iso);
+  }
+  return out;
+}
+function genSlots(prof, fechaISO, tomadas){
+  const dia = diaISO(fechaISO), dur = prof.duracion_min || 20, out = [];
+  horarios.filter(h=>h.profesional_id===prof.id && h.dia===dia).forEach(h=>{
+    const [h1,m1] = h.desde.split(':').map(Number), [h2,m2] = h.hasta.split(':').map(Number);
+    for(let t=h1*60+m1; t+dur<=h2*60+m2; t+=dur)
+      out.push(String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0'));
+  });
+  const ahora = new Date().toTimeString().slice(0,5);
+  return out
+    .filter(x => !tomadas.includes(x))
+    .filter(x => fechaISO > hoyLocalISO() || x > ahora);
+}
+async function citasTomadas(profId, fechaISO){
+  const {data} = await sb.from('citas').select('hora').eq('profesional_id', profId).eq('fecha', fechaISO).neq('estado','anulada');
+  return (data||[]).map(c => String(c.hora).slice(0,5));
+}
+async function cargarMiCita(){
+  const id = localStorage.getItem('tt_cita'); if(!id || !sb) return;
+  const {data} = await sb.from('citas').select('*, profesionales(nombre,especialidad)').eq('id', id).single();
+  if(data && data.estado === 'reservada' && data.fecha >= hoyLocalISO()) miCita = data;
+  else { localStorage.removeItem('tt_cita'); miCita = null; }
+}
+function cardMiCita(){
+  if(!miCita) return '';
+  const p = miCita.profesionales || {};
+  return `<div class="status esperando" style="margin-bottom:12px;">📅 Su hora reservada: <b>${DIAS[diaISO(miCita.fecha)]} ${miCita.fecha.slice(8,10)}/${miCita.fecha.slice(5,7)} · ${String(miCita.hora).slice(0,5)}</b><br>${p.nombre||''} (${p.especialidad||''})
+  <button class="ib no" id="btn-anular" style="margin-top:6px;">Anular esta hora</button></div>`;
+}
+async function anularCita(){
+  if(!miCita) return;
+  if(!confirm('¿Anular su hora reservada?')) return;
+  await sb.from('citas').update({estado:'anulada'}).eq('id', miCita.id);
+  localStorage.removeItem('tt_cita'); miCita = null;
+  const pf = $('p-form'); if(pf) pf.remove();
+  renderAll();
+}
+
+function pintaModo(){
+  const on  = 'margin-top:0;';
+  const off = 'margin-top:0;background:#fff;color:var(--teal-d);border:1.5px solid var(--line);';
+  const th=$('tab-hoy'), tr=$('tab-res');
+  if(th) th.style.cssText = pModo==='hoy' ? on : off;
+  if(tr) tr.style.cssText = pModo==='reservar' ? on : off;
+  if(pModo==='hoy') pintaHoy(); else pintaReservar();
+}
+function pintaHoy(){
+  const cont = $('p-modo'); if(!cont) return;
+  const quedan = Math.max(cfg.cupos - fila.length, 0);
+  cont.innerHTML = `
       <h3>Solicitar número de atención</h3>
       <label>Nombre</label><input id="in-nombre" placeholder="Ej: Ana Pérez">
       <label>RUT</label><input id="in-rut" placeholder="12.345.678-9" inputmode="text" autocomplete="off"
@@ -234,7 +296,107 @@ function renderPaciente(){
       <select id="in-triage"><option value="1">Bien, es un control</option><option value="2">Con molestias</option><option value="3">Con mucho dolor</option></select>
       <button class="btn" id="btn-sacar" ${quedan?'':'disabled'}>${quedan?'Sacar mi número':'Sin cupos por hoy'}</button>
       <div class="triage-note" id="nota-cupos">El triage no altera el orden: informa al equipo clínico. Cupos disponibles: <b>${quedan}</b> de ${cfg.cupos}.</div>`;
-    const b = $('btn-sacar'); if(b) b.onclick = sacarNumero;
+  const b = $('btn-sacar'); if(b) b.onclick = sacarNumero;
+}
+function pintaReservar(){
+  const cont = $('p-modo'); if(!cont) return;
+  if(!profes.length){ cont.innerHTML = '<div class="empty">Este centro aún no tiene agenda de profesionales disponible.</div>'; return; }
+  const esps = [...new Set(profes.map(p=>p.especialidad))];
+  cont.innerHTML = `
+      <h3>Reservar hora</h3>
+      <label>Especialidad</label>
+      <select id="res-esp"><option value="">Elija especialidad…</option>${esps.map(e=>`<option>${e}</option>`).join('')}</select>
+      <div id="res-prof-box" style="display:none"><label>Profesional</label><select id="res-prof"></select></div>
+      <div id="res-fecha-box" style="display:none"><label>Día</label><select id="res-fecha"></select></div>
+      <div id="res-slots" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;"></div>
+      <div id="res-datos" style="display:none">
+        <div class="status esperando" id="res-elegido" style="margin:12px 0"></div>
+        <label>Nombre</label><input id="res-nombre" placeholder="Ej: Ana Pérez">
+        <label>RUT</label><input id="res-rut" placeholder="12.345.678-9"
+          onblur="if(rutValido(this.value)) this.value = formateaRut(this.value)">
+        <label>Teléfono</label><input id="res-fono" type="tel" placeholder="+56 9 1234 5678"
+          onblur="var n=normalizaFono(this.value); if(n) this.value=n">
+        <button class="btn" id="res-btn">Confirmar reserva</button>
+      </div>`;
+  $('res-esp').onchange = () => {
+    const lista = profes.filter(p=>p.especialidad===$('res-esp').value);
+    $('res-prof').innerHTML = '<option value="">Elija profesional…</option>' + lista.map(p=>`<option value="${p.id}">${p.nombre} (${p.duracion_min} min)</option>`).join('');
+    $('res-prof-box').style.display = lista.length ? '' : 'none';
+    $('res-fecha-box').style.display='none'; $('res-slots').innerHTML=''; $('res-datos').style.display='none';
+  };
+  $('res-prof').onchange = () => {
+    res.prof = profes.find(p=>String(p.id)===$('res-prof').value); if(!res.prof) return;
+    const fs = fechasDisponibles(res.prof);
+    $('res-fecha').innerHTML = '<option value="">Elija día…</option>' + fs.map(f=>`<option value="${f}">${DIAS[diaISO(f)]} ${f.slice(8,10)}/${f.slice(5,7)}</option>`).join('');
+    $('res-fecha-box').style.display = fs.length ? '' : 'none';
+    if(!fs.length) $('res-slots').innerHTML = '<div class="empty">Sin días disponibles en las próximas 2 semanas.</div>';
+    else $('res-slots').innerHTML=''; $('res-datos').style.display='none';
+  };
+  $('res-fecha').onchange = async () => {
+    res.fecha = $('res-fecha').value; if(!res.fecha) return;
+    $('res-slots').innerHTML = '<div class="empty">Buscando horas…</div>';
+    const slots = genSlots(res.prof, res.fecha, await citasTomadas(res.prof.id, res.fecha));
+    $('res-slots').innerHTML = slots.length
+      ? slots.map(h=>`<button class="ib" data-h="${h}" style="font-size:14px;padding:8px 12px;">${h}</button>`).join('')
+      : '<div class="empty">No quedan horas para ese día. Pruebe otro.</div>';
+    $('res-slots').querySelectorAll('.ib').forEach(b => b.onclick = () => {
+      res.hora = b.dataset.h;
+      $('res-slots').querySelectorAll('.ib').forEach(x=>x.style.background='');
+      b.style.background = 'var(--teal-l)';
+      $('res-elegido').innerHTML = `Reservando: <b>${res.prof.nombre}</b> · ${DIAS[diaISO(res.fecha)]} ${res.fecha.slice(8,10)}/${res.fecha.slice(5,7)} a las <b>${res.hora}</b>`;
+      $('res-datos').style.display = '';
+    });
+    $('res-datos').style.display='none';
+  };
+  $('res-btn').onclick = confirmarReserva;
+}
+async function confirmarReserva(){
+  const nombre = ($('res-nombre').value||'').trim() || 'Paciente';
+  if(!rutValido($('res-rut').value)){ alert('El RUT ingresado no es válido.'); $('res-rut').focus(); return; }
+  const fonoIn = ($('res-fono').value||'').trim();
+  let fono = null;
+  if(fonoIn){ fono = normalizaFono(fonoIn); if(!fono){ alert('Teléfono no interpretable. Ej: +56 9 1234 5678.'); return; } }
+  const {data, error} = await sb.from('citas').insert({
+    centro: CENTRO, profesional_id: res.prof.id, fecha: res.fecha, hora: res.hora,
+    nombre, rut: formateaRut($('res-rut').value), fono,
+  }).select().single();
+  if(error){
+    if(String(error.code)==='23505'){ alert('Ese horario acaba de ser tomado por otra persona. Elija otro.'); $('res-fecha').onchange(); }
+    else alert('Error al reservar: ' + error.message);
+    return;
+  }
+  localStorage.setItem('tt_cita', data.id);
+  miCita = {...data, profesionales:{nombre:res.prof.nombre, especialidad:res.prof.especialidad}};
+  const pf = $('p-form'); if(pf) pf.remove();
+  renderAll();
+}
+
+function renderPaciente(){
+  const el = $('p-body');
+  if(!el) return;
+  if(!sb){ el.innerHTML = '<div class="empty">Configura Supabase para comenzar</div>'; return; }
+  const mio = fila.find(x=>String(x.id)===String(miId));
+  if(!mio){
+    const quedan = Math.max(cfg.cupos - fila.length, 0);
+    // Si el formulario ya está en pantalla, NO lo redibujamos (se borraría lo escrito):
+    // solo actualizamos el contador de cupos y el estado del botón.
+    if($('p-form')){
+      const nota = $('nota-cupos');
+      if(nota) nota.innerHTML = `El triage no altera el orden: informa al equipo clínico. Cupos disponibles: <b>${quedan}</b> de ${cfg.cupos}.`;
+      const b = $('btn-sacar');
+      if(b){ b.disabled = !quedan; b.textContent = quedan ? 'Sacar mi número' : 'Sin cupos por hoy'; }
+      return;
+    }
+    el.innerHTML = `<div id="p-form">` + cardMiCita() + `
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button class="btn" id="tab-hoy" style="margin-top:0;">Atención hoy</button>
+        <button class="btn" id="tab-res" style="margin-top:0;">Reservar hora</button>
+      </div>
+      <div id="p-modo"></div></div>`;
+    const ba = $('btn-anular'); if(ba) ba.onclick = anularCita;
+    $('tab-hoy').onclick = () => { pModo='hoy'; pintaModo(); };
+    $('tab-res').onclick = () => { pModo='reservar'; pintaModo(); };
+    pintaModo();
   } else {
     const esp = esperando();
     const antes = esp.findIndex(x=>x.id===mio.id);
@@ -396,7 +558,7 @@ function renderSala(){
 function tick(){ const c=$('tv-clock'); if(!c) return; c.textContent = new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
 setInterval(tick, 5000); tick();
 
-function renderAll(){ renderPaciente(); renderFuncionario(); renderSala(); }
+function renderAll(){ renderPaciente(); renderFuncionario(); renderSala(); renderAgendaHoy(); renderProfes(); }
 
 // ---------- Tiempo real + respaldo por sondeo ----------
 let _iniciado = false;
@@ -405,9 +567,11 @@ function iniciar(){
   sb.channel('fila-rt-' + CENTRO)
     .on('postgres_changes', {event:'*', schema:'public', table:'fila_tickets', filter:'centro=eq.'+CENTRO}, cargar)
     .on('postgres_changes', {event:'*', schema:'public', table:'centros', filter:'slug=eq.'+CENTRO}, cargar)
+    .on('postgres_changes', {event:'*', schema:'public', table:'citas', filter:'centro=eq.'+CENTRO}, cargar)
+    .on('postgres_changes', {event:'*', schema:'public', table:'profesionales', filter:'centro=eq.'+CENTRO}, cargar)
     .subscribe(status => { if(status==='SUBSCRIBED') setConn(true,'en línea · tiempo real'); });
   setInterval(cargar, 8000);  // respaldo si el tiempo real falla
-  cargar();
+  cargarMiCita().then(cargar);
 }
 
 // ---- Acceso funcionario: elegir centro + clave del centro ----
@@ -434,11 +598,90 @@ async function loginFuncionario(){
   };
   if(sessionStorage.getItem('tt_auth_' + CENTRO) === 'ok') entrarPanel(CENTRO);
 }
+const PANELES_AGENDA = `
+<div class="panel" id="pan-agenda" style="margin-top:18px;">
+  <h3>📅 Citas de hoy</h3><div id="ag-lista"><div class="empty">Cargando…</div></div>
+</div>
+<div class="panel" id="pan-profes" style="margin-top:18px;">
+  <h3>👩‍⚕️ Profesionales y horarios</h3>
+  <div id="prof-lista"><div class="empty">Cargando…</div></div>
+  <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center;">
+    <input id="np-nombre" placeholder="Nombre profesional" style="flex:2;min-width:150px;">
+    <input id="np-esp" placeholder="Especialidad" style="flex:2;min-width:130px;">
+    <input id="np-dur" type="number" value="20" min="5" step="5" style="width:80px;" title="minutos por atención">
+    <button class="ib ok" id="np-add" style="font-weight:700;padding:9px 14px;">+ Agregar profesional</button>
+  </div>
+  <div class="triage-note">Duración = minutos por atención. Luego agrega los horarios semanales a cada profesional.</div>
+</div>`;
+
+function renderAgendaHoy(){
+  const el = $('ag-lista'); if(!el) return;
+  el.innerHTML = citasHoy.length ? citasHoy.map(c => `
+    <div class="qrow">
+      <div class="n">${String(c.hora).slice(0,5)}</div>
+      <div class="who"><div class="nm">${c.nombre}</div><div class="mt">${c.rut||''} · ${(c.profesionales||{}).nombre||''}${c.fono?' · 📞 '+c.fono:''}</div></div>
+      <span class="est ${c.estado==='reservada'?'':'llamado'}">${c.estado.toUpperCase()}</span>
+      ${c.estado==='reservada' ? `
+        <button class="ib ok" data-a="atendida" data-id="${c.id}">✔</button>
+        <button class="ib" data-a="ausente" data-id="${c.id}">✖ Ausente</button>
+        <button class="ib no" data-a="anulada" data-id="${c.id}">Anular</button>` : ''}
+    </div>`).join('') : '<div class="empty">Sin citas reservadas para hoy</div>';
+  el.querySelectorAll('.ib').forEach(b => b.onclick = async () => {
+    await sb.from('citas').update({estado: b.dataset.a}).eq('id', +b.dataset.id);
+    cargar();
+  });
+}
+function renderProfes(){
+  const el = $('prof-lista'); if(!el) return;
+  el.innerHTML = profes.length ? profes.map(p => {
+    const hs = horarios.filter(h=>h.profesional_id===p.id);
+    return `<div style="border-bottom:1px solid var(--line);padding:10px 0;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="flex:1;"><b>${p.nombre}</b> <span style="color:var(--muted);font-size:12px;">${p.especialidad} · ${p.duracion_min} min/atención</span></div>
+        <button class="ib no" data-delprof="${p.id}">Eliminar</button>
+      </div>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+        ${hs.map(h=>`<span class="chip t1">${DIAS[h.dia]} ${String(h.desde).slice(0,5)}–${String(h.hasta).slice(0,5)} <a href="#" data-delh="${h.id}" style="color:var(--red);text-decoration:none;">✕</a></span>`).join('')}
+        <select data-hd="${p.id}" style="width:auto;padding:5px 8px;font-size:12px;">${DIAS.slice(1).map((d,i)=>`<option value="${i+1}">${d}</option>`).join('')}</select>
+        <input type="time" data-h1="${p.id}" value="09:00" style="width:auto;padding:5px;font-size:12px;">
+        <input type="time" data-h2="${p.id}" value="13:00" style="width:auto;padding:5px;font-size:12px;">
+        <button class="ib" data-addh="${p.id}">+ horario</button>
+      </div>
+    </div>`;
+  }).join('') : '<div class="empty">Aún no hay profesionales en este centro</div>';
+  el.querySelectorAll('[data-addh]').forEach(b => b.onclick = async () => {
+    const id = +b.dataset.addh;
+    const dia = +el.querySelector(`[data-hd="${id}"]`).value;
+    const d1 = el.querySelector(`[data-h1="${id}"]`).value, d2 = el.querySelector(`[data-h2="${id}"]`).value;
+    if(!d1 || !d2 || d1 >= d2){ alert('Revisa las horas: inicio debe ser antes que término.'); return; }
+    await sb.from('horarios').insert({profesional_id:id, dia, desde:d1, hasta:d2});
+    cargar();
+  });
+  el.querySelectorAll('[data-delh]').forEach(a => a.onclick = async (e) => {
+    e.preventDefault();
+    await sb.from('horarios').delete().eq('id', +a.dataset.delh);
+    cargar();
+  });
+  el.querySelectorAll('[data-delprof]').forEach(b => b.onclick = async () => {
+    if(!confirm('¿Eliminar este profesional y sus horarios?')) return;
+    await sb.from('profesionales').update({activo:false}).eq('id', +b.dataset.delprof);
+    cargar();
+  });
+  const add = $('np-add');
+  if(add && !add._on){ add._on = true; add.onclick = async () => {
+    const n = $('np-nombre').value.trim(), e2 = $('np-esp').value.trim(), d = +$('np-dur').value || 20;
+    if(!n || !e2){ alert('Nombre y especialidad son obligatorios.'); return; }
+    await sb.from('profesionales').insert({centro:CENTRO, nombre:n, especialidad:e2, duracion_min:d});
+    $('np-nombre').value=''; $('np-esp').value='';
+    cargar();
+  };}
+}
+
 function entrarPanel(slug){
   CENTRO = slug; localStorage.setItem('tt_centro', slug);
   const l = $('f-login'); if(l) l.remove();
   const grid = document.querySelector('.f-grid');
-  if(grid) grid.style.display = '';
+  if(grid){ grid.style.display = ''; if(!$('pan-agenda')) grid.insertAdjacentHTML('afterend', PANELES_AGENDA); }
   iniciar();
 }
 
