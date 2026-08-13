@@ -618,6 +618,15 @@ function renderAgendaHoy(){
 }
 function renderProfes(){
   const el = $('prof-lista'); if(!el) return;
+  // GUARD: no redibujar mientras el funcionario edita horarios (el foco está
+  // dentro del panel) — si no, el refresco cada 8s borra lo que está eligiendo.
+  if(el.contains(document.activeElement)) return;
+  // Preservar día/horas ya elegidos de cada profesional entre redibujos
+  const prev = {};
+  el.querySelectorAll('select[data-hd],input[data-h1],input[data-h2]').forEach(x=>{
+    const id = x.dataset.hd || x.dataset.h1 || x.dataset.h2;
+    (prev[id] = prev[id] || {})[x.dataset.hd ? 'd' : (x.dataset.h1 ? 'h1' : 'h2')] = x.value;
+  });
   el.innerHTML = profes.length ? profes.map(p => {
     const hs = horarios.filter(h=>h.profesional_id===p.id);
     return `<div style="border-bottom:1px solid var(--line);padding:10px 0;">
@@ -634,21 +643,31 @@ function renderProfes(){
       </div>
     </div>`;
   }).join('') : '<div class="empty">Aún no hay profesionales en este centro</div>';
+  // Restaurar lo que estaba elegido antes del redibujo
+  Object.keys(prev).forEach(id=>{
+    const v = prev[id];
+    const sd = el.querySelector(`select[data-hd="${id}"]`); if(sd && v.d)  sd.value = v.d;
+    const i1 = el.querySelector(`input[data-h1="${id}"]`);  if(i1 && v.h1) i1.value = v.h1;
+    const i2 = el.querySelector(`input[data-h2="${id}"]`);  if(i2 && v.h2) i2.value = v.h2;
+  });
   el.querySelectorAll('[data-addh]').forEach(b => b.onclick = async () => {
     const id = +b.dataset.addh;
     const dia = +el.querySelector(`[data-hd="${id}"]`).value;
     const d1 = el.querySelector(`[data-h1="${id}"]`).value, d2 = el.querySelector(`[data-h2="${id}"]`).value;
     if(!d1 || !d2 || d1 >= d2){ alert('Revisa las horas: inicio debe ser antes que término.'); return; }
+    b.blur();   // soltar el foco para que el guard permita redibujar con el nuevo horario
     await sb.from('horarios').insert({profesional_id:id, dia, desde:d1, hasta:d2});
     cargar();
   });
   el.querySelectorAll('[data-delh]').forEach(a => a.onclick = async (e) => {
     e.preventDefault();
+    a.blur();
     await sb.from('horarios').delete().eq('id', +a.dataset.delh);
     cargar();
   });
   el.querySelectorAll('[data-delprof]').forEach(b => b.onclick = async () => {
     if(!confirm('¿Eliminar este profesional y sus horarios?')) return;
+    b.blur();
     await sb.from('profesionales').update({activo:false}).eq('id', +b.dataset.delprof);
     cargar();
   });
