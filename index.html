@@ -77,6 +77,10 @@
   .t1{background:var(--green-l); color:var(--green);} .t2{background:var(--amber-l); color:var(--amber);} .t3{background:var(--red-l); color:var(--red);}
   .est{font-size:11px; font-weight:700; padding:3px 8px; border-radius:10px; background:var(--teal-l); color:var(--teal-d);}
   .est.llamado{background:var(--amber-l); color:var(--amber);}
+  .chip.libre{background:#fff; border:1px dashed var(--teal); color:var(--teal-d);}
+  .dispo-row{border-bottom:1px solid var(--line); padding:9px 0;}
+  .dispo-row:last-child{border-bottom:none;}
+  .dispo-chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;}
   .ib{border:1px solid var(--line); background:#fff; border-radius:7px; padding:5px 8px; cursor:pointer; font-size:12px;}
   .ib:hover{background:var(--teal-l);}
   .ib.ok{color:var(--green);} .ib.no{color:var(--red);}
@@ -548,7 +552,7 @@ function renderSala(){
 function tick(){ const c=$('tv-clock'); if(!c) return; c.textContent = new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
 setInterval(tick, 5000); tick();
 
-function renderAll(){ renderPaciente(); renderFuncionario(); renderSala(); renderAgendaHoy(); renderProfes(); }
+function renderAll(){ renderPaciente(); renderFuncionario(); renderSala(); renderAgendaHoy(); renderDispo(); renderProfes(); }
 
 // ---------- Tiempo real + respaldo por sondeo ----------
 let _iniciado = false;
@@ -599,6 +603,10 @@ const PANELES_AGENDA = `
     </span>
   </h3><div id="ag-lista"><div class="empty">Cargando…</div></div>
 </div>
+<div class="panel" id="pan-dispo" style="margin-top:18px;">
+  <h3>🗓️ Día completo <span id="dispo-fecha" style="font-weight:400;font-size:12.5px;color:var(--muted);"></span></h3>
+  <div id="dispo-lista"><div class="empty">Cargando…</div></div>
+</div>
 <div class="panel" id="pan-profes" style="margin-top:18px;">
   <h3>👩‍⚕️ Profesionales y horarios</h3>
   <div id="prof-lista"><div class="empty">Cargando…</div></div>
@@ -630,6 +638,36 @@ function renderAgendaHoy(){
     await sb.from('citas').update({estado: b.dataset.a}).eq('id', +b.dataset.id);
     cargar();
   });
+}
+function renderDispo(){
+  const el = $('dispo-lista'); if(!el) return;
+  const f = agFecha || hoyLocalISO(), dia = diaISO(f);
+  const lf = $('dispo-fecha'); if(lf) lf.textContent = '— ' + DIAS[dia] + ' ' + f.slice(8,10) + '/' + f.slice(5,7);
+  if(!profes.length){ el.innerHTML = '<div class="empty">Aún no hay profesionales en este centro</div>'; return; }
+  el.innerHTML = profes.map(p => {
+    const hs = horarios.filter(h => h.profesional_id===p.id && h.dia===dia);
+    if(!hs.length) return `<div class="dispo-row"><b>${p.nombre}</b> <span style="color:var(--muted);font-size:12px;">${p.especialidad} · no atiende este día</span></div>`;
+    const dur = p.duracion_min || 20, slots = [];
+    hs.forEach(h => {
+      const [h1,m1] = h.desde.split(':').map(Number), [h2,m2] = h.hasta.split(':').map(Number);
+      for(let t=h1*60+m1; t+dur<=h2*60+m2; t+=dur)
+        slots.push(String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0'));
+    });
+    slots.sort();
+    const citasP = citasHoy.filter(c => c.profesional_id===p.id);
+    let tom = 0;
+    const chips = slots.map(s => {
+      const c = citasP.find(x => String(x.hora).slice(0,5)===s);
+      if(c){ tom++;
+        const cls = c.estado==='atendida' ? 't1' : (c.estado==='ausente' ? 't3' : 't2');
+        return `<span class="chip ${cls}" title="${c.nombre}${c.rut ? ' · '+c.rut : ''} (${c.estado})">${s} · ${c.nombre.split(' ')[0]}</span>`;
+      }
+      return `<span class="chip libre">${s}</span>`;
+    }).join('');
+    const lib = slots.length - tom;
+    return `<div class="dispo-row"><b>${p.nombre}</b> <span style="color:var(--muted);font-size:12px;">${p.especialidad} · ${dur} min · ${tom} tomada${tom===1?'':'s'} · ${lib} libre${lib===1?'':'s'}</span>
+      <div class="dispo-chips">${chips}</div></div>`;
+  }).join('') + `<div class="triage-note" style="margin-top:10px;">Punteado = disponible · Amarillo = reservada · Verde = atendida · Rojo = ausente. El día se cambia con las flechas ◀ ▶ del panel de citas.</div>`;
 }
 function renderProfes(){
   const el = $('prof-lista'); if(!el) return;
