@@ -114,6 +114,7 @@
 
 <div class="top">
   <div class="logo">Te<span>Toca</span></div>
+  <a href="portada.html" style="color:#8fd4da;font-size:12px;text-decoration:none;font-weight:600;">← Portada</a>
   <div class="tag">TeToca · Lista de Atención Digital · conectada a Supabase</div>
   <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-txt">conectando…</span></div>
   <div class="tag" style="margin-left:auto;font-weight:700">🖥️ Panel Funcionario</div>
@@ -603,8 +604,21 @@ async function loginFuncionario(){
     <label>Clave del centro</label><input id="login-clave" type="password" placeholder="clave del centro">
     <div id="login-err" style="color:var(--red);font-size:13px;display:none;margin-top:8px;">Clave incorrecta para ese centro.</div>
     <button class="bigbtn" id="login-btn" style="margin-top:16px;">Entrar</button>
+    <a href="#" id="login-olvido" style="display:block;text-align:center;margin-top:10px;font-size:12.5px;color:var(--muted);">¿Olvidó la clave del centro?</a>
+    <div id="login-ayuda" style="display:none;margin-top:10px;background:var(--teal-l);border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--teal-d);line-height:1.5;">
+      Las claves las administra el equipo TeToca.<br>Solicite la recuperación escribiendo a
+      <a id="login-mail" href="mailto:jmaldonador@gmail.com" style="color:var(--teal-d);font-weight:700;">jmaldonador@gmail.com</a>
+      e indique su centro de salud y su cargo.
+    </div>
   </div>`);
   setConn(true, 'elija su centro');
+  $('login-olvido').onclick = (e) => {
+    e.preventDefault();
+    const s = $('login-centro');
+    const nom = (s.options[s.selectedIndex] || {}).text || 'centro no indicado';
+    $('login-mail').href = 'mailto:jmaldonador@gmail.com?subject=' + encodeURIComponent('TeToca · Recuperar clave — ' + nom);
+    $('login-ayuda').style.display = 'block';
+  };
   $('login-btn').onclick = async () => {
     const slug = $('login-centro').value;
     const {data:c} = await sb.from('centros').select('*').eq('slug', slug).single();
