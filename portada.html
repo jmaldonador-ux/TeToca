@@ -334,7 +334,10 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const $ = id => document.getElementById(id);
-const BASE = location.origin + location.pathname.replace(/[^/]*$/, '');
+// Si la página se abre como archivo local (doble clic), los enlaces deben ir
+// igualmente al sitio en producción — no a carpetas del computador.
+const PROD = 'https://te-toca-seven.vercel.app/';
+const BASE = location.protocol === 'file:' ? PROD : location.origin + location.pathname.replace(/[^/]*$/, '');
 let rol = null;            // 'paciente' | 'centro'
 let centros = [];
 

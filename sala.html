@@ -777,6 +777,15 @@ function renderProfes(){
 
 function entrarPanel(slug){
   CENTRO = slug; localStorage.setItem('tt_centro', slug);
+  // Botón para cerrar la sesión del funcionario y volver a la portada
+  if(!document.getElementById('btn-salir')){
+    document.querySelector('.top').insertAdjacentHTML('beforeend',
+      `<button id="btn-salir" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);color:#fff;padding:7px 14px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;">Cerrar sesión</button>`);
+    document.getElementById('btn-salir').onclick = () => {
+      sessionStorage.removeItem('tt_auth_' + CENTRO);
+      location.href = 'portada.html';
+    };
+  }
   const l = $('f-login'); if(l) l.remove();
   const grid = document.querySelector('.f-grid');
   if(grid){ grid.style.display = ''; if(!$('pan-agenda')){ grid.insertAdjacentHTML('afterend', PANELES_AGENDA);
