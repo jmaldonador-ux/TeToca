@@ -405,7 +405,8 @@ function renderPaciente(){
         <button class="btn" id="tab-hoy" style="margin-top:0;">Atención hoy</button>
         <button class="btn" id="tab-res" style="margin-top:0;">Reservar hora</button>
       </div>
-      <div id="p-modo"></div></div>`;
+      <div id="p-modo"></div>
+      <a href="portada.html" style="display:block;text-align:center;margin-top:16px;font-size:13.5px;color:var(--muted);text-decoration:none;">← Volver a la portada</a></div>`;
     const ba = $('btn-anular'); if(ba) ba.onclick = anularCita;
     $('tab-hoy').onclick = () => { pModo='hoy'; pintaModo(); };
     $('tab-res').onclick = () => { pModo='reservar'; pintaModo(); };
@@ -428,7 +429,8 @@ function renderPaciente(){
       <div class="pos">
         <div class="posbox"><div class="n">${mio.estado==='esperando'?antes:'—'}</div><div class="t">PERSONAS ANTES</div></div>
         <div class="posbox"><div class="n">${mio.estado==='esperando'?('~'+estim+"'"):'—'}</div><div class="t">ESPERA ESTIMADA</div></div>
-      </div>${st}${extra}`;
+      </div>${st}${extra}
+      <a href="portada.html" style="display:block;text-align:center;margin-top:16px;font-size:13.5px;color:var(--muted);text-decoration:none;">← Volver a la portada</a>`;
     const bl = $('btn-liberar'); if(bl) bl.onclick = liberar;
     const bn = $('btn-nuevo');   if(bn) bn.onclick = ()=>{ localStorage.removeItem('fila_ticket_id'); miId=null; renderAll(); };
   }
