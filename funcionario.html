@@ -171,6 +171,9 @@ const _params = new URLSearchParams(location.search);
 let CENTRO = (_params.get('c') || localStorage.getItem('tt_centro') || 'demo').toLowerCase();
 if(_params.get('c')) localStorage.setItem('tt_centro', CENTRO);
 const C_EXPLICITO = !!_params.get('c');
+// La app del paciente exige centro explícito en la URL (?c=): si no viene,
+// se parte SIEMPRE desde la portada (nada de recordar el último centro).
+if(document.getElementById('p-body') && !C_EXPLICITO){ location.replace('portada.html'); }
 
 const configurado = SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.includes("PEGAR");
 if(!configurado){ document.getElementById('warn-cfg').style.display='block'; }
